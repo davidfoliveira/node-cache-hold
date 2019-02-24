@@ -1,13 +1,13 @@
 {
   "name": "cache-hold",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "An in-memory caching module which holds similar calls and fulfils all with the same result. Supports Promises and periodical cache updates.",
   "main": "cache-hold.js",
   "devDependencies": {
     "jest": "^24.1.0"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest test"
   },
   "author": "David Oliveira",
   "license": "ISC",

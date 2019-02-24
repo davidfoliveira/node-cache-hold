@@ -117,7 +117,7 @@ describe('Basic lookup with defaults', () => {
         });
 
         test.each([['fast', fetchError], ['slow', fetchSlowError]])
-        ('Doesnt reject multiple calls with one fetch error (with %s fetcher)', async (fetchName, fetchFn) => {
+        ('doesnt reject multiple calls with one fetch error (with %s fetcher)', async (fetchName, fetchFn) => {
             // Create a new fetcher which adds a call number to the fetch function return value
             const cacheKey = `cache_key_test_e3 ${fetchName}`;
             const callCount = {};
@@ -133,7 +133,7 @@ describe('Basic lookup with defaults', () => {
 
             let ex;
             try {
-                await cache.lookup(`cache_key_test_e3 ${fetchName}`, modifiedFetchFn);
+                await cache.lookup(cacheKey, modifiedFetchFn);
             }
             catch(err) {
                 ex = err;
@@ -164,7 +164,7 @@ describe('Basic lookup with defaults', () => {
             }
 
             try {
-                await cache.lookup(`cache_key_test_e4 ${fetchName}`, modifiedFetchFn);
+                await cache.lookup(cacheKey, modifiedFetchFn);
             }
             catch(err) {
                 ex = err;

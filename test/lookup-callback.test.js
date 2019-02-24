@@ -1,6 +1,23 @@
 const
     assert = require('assert'),
-    CacheHold = require('../cache-hold');
+    CacheHold = require('../cache-hold'),
+
+    fetch = (cb) => {
+        cb(null, `ERA UMA VEZ`);
+    },
+    fetchSlow = (cb) => {
+        setTimeout(() => {
+            cb(null, `ERA UMA VEZ`);
+        }, 500);
+    },
+    fetchError = (cb) => {
+        cb(new Error("BAAD"));
+    },
+    fetchSlowError = (cb) => {
+        setTimeout(() => {
+            cb(new Error("BAAD"));
+        }, 500);
+    };
 
 
 describe('Basic lookup with defaults', () => {
@@ -8,23 +25,7 @@ describe('Basic lookup with defaults', () => {
     const
         cache = new CacheHold({
             ttl: 10000
-        }),
-        fetch = (cb) => {
-            cb(null, `ERA UMA VEZ`);
-        },
-        fetchSlow = (cb) => {
-            setTimeout(() => {
-                cb(null, `ERA UMA VEZ`);
-            }, 500);
-        },
-        fetchError = (cb) => {
-            cb(new Error("BAAD"));
-        },
-        fetchSlowError = (cb) => {
-            setTimeout(() => {
-                cb(new Error("BAAD"));
-            }, 500);
-        };
+        });
 
 
     // HAPPY PATH
@@ -114,37 +115,45 @@ describe('Basic lookup with defaults', () => {
         });
 
         test.each([['fast', fetchError], ['slow', fetchSlowError]])
-        ('rejects multiple calls with one fetch error (with %s fetcher)', async (fetchName, fetchFn) => {
+        ('doesnt reject multiple calls with one fetch error (with %s fetcher)', async (fetchName, fetchFn) => {
             // Create a new fetcher which adds a call number to the fetch function return value
             const cacheKey = `cache_key_test_e3 ${fetchName}`;
             const callCount = {};
             callCount[fetchName] = 0;
             const modifiedFetchFn = (cb) => fetchFn((err) => cb(new Error(`${err.message} ${callCount[fetchName]++}`)));
 
-            for (let x = 0; x < 10; x++) {
+            for (let x = 0; x < 3; x++) {
                 const rv = cache.lookup(cacheKey, modifiedFetchFn); // Not awaiting on purpose, to make the calls after the first call go to hold
                     rv.catch((ex) => {}); // just ignore for now - we'll tackle it on the next test
             }
 
             let ex;
             try {
-                await cache.lookup(`cache_key_test_e3 ${fetchName}`, modifiedFetchFn);
+                await cache.lookup(cacheKey, modifiedFetchFn);
             }
             catch(err) {
                 ex = err;
             }
-            expect(ex.toString()).toBe("Error: BAAD 0");
+            expect(ex.toString()).toBe("Error: BAAD 3");
         });
 
         test.each([['fast', fetchError], ['slow', fetchSlowError]])
-        ('raises in all calls after one fetch error (with %s fetcher)', async (fetchName, fetchFn) => {
+        ('not everything raises if one of the calls have an error (with %s fetcher)', async (fetchName, fetchFn) => {
             // Create a new fetcher which adds a call number to the fetch function return value
-            const cacheKey = `cache_key_test_e3 ${fetchName}`;
+            const cacheKey = `cache_key_test_e4 ${fetchName}`;
             const callCount = {};
             let errors = 0;
 
-            callCount[fetchName] = 0;
-            const modifiedFetchFn = (cb) => fetchFn((err) => cb(new Error(`${err.message} ${callCount[fetchName]++}`)));
+            callCount[fetchName] = -1;
+            const modifiedFetchFn = (cb) => {
+                fetchFn((err) => {
+                    callCount[fetchName]++;
+                    if (callCount[fetchName] == 0)
+                        cb(new Error(`${err.message} ${callCount[fetchName]++}`))
+                    else
+                        cb(null, "Fake OK");
+                });
+            };
             for (let x = 0; x < 10; x++) {
                 const rv = cache.lookup(cacheKey, modifiedFetchFn); // Not awaiting on purpose, to make the calls after the first call go to hold
                     rv.catch((ex) => {
@@ -153,46 +162,49 @@ describe('Basic lookup with defaults', () => {
             }
 
             try {
-                await cache.lookup(`cache_key_test_e3 ${fetchName}`, modifiedFetchFn);
+                await cache.lookup(cacheKey, modifiedFetchFn);
             }
             catch(err) {
                 ex = err;
                 errors++;
             }
-            expect(errors).toBe(11);
+            expect(errors).toBe(1);
         });
-    });
-
-    describe('Option errorFailsAll: true', () => {
-
-        test.each([['fast', fetchError], ['slow', fetchSlowError]])
-        ('raises in all calls after one fetch error (with %s fetcher)', async (fetchName, fetchFn) => {
-            // Create a new fetcher which adds a call number to the fetch function return value
-            const cacheKey = `cache_key_test_e3 ${fetchName}`;
-            const callCount = {};
-            let errors = 0;
-
-            callCount[fetchName] = 0;
-            const modifiedFetchFn = (cb) => fetchFn((err) => cb(new Error(`${err.message} ${callCount[fetchName]++}`)));
-            for (let x = 0; x < 10; x++) {
-                const rv = cache.lookup(cacheKey, modifiedFetchFn); // Not awaiting on purpose, to make the calls after the first call go to hold
-                    rv.catch((ex) => {
-                        errors++;
-                    }); // just ignore for now - we'll tackle it on the next test
-            }
-
-            try {
-                await cache.lookup(`cache_key_test_e3 ${fetchName}`, modifiedFetchFn);
-            }
-            catch(err) {
-                ex = err;
-                errors++;
-            }
-            expect(errors).toBe(11);
-        });
-
     });
 
 });
 
+describe('Option errorFailsAll: true', () => {
 
+    const
+        cache = new CacheHold({
+            errorFailsAll: true
+        });
+
+    test.each([['fast', fetchError], ['slow', fetchSlowError]])
+    ('raises in all calls after one fetch error (with %s fetcher)', async (fetchName, fetchFn) => {
+        // Create a new fetcher which adds a call number to the fetch function return value
+        const cacheKey = `cache_key_test_e5 ${fetchName}`;
+        const callCount = {};
+        let errors = 0;
+
+        callCount[fetchName] = 0;
+        const modifiedFetchFn = (cb) => fetchFn((err) => cb(new Error(`${err.message} ${callCount[fetchName]++}`)));
+        for (let x = 0; x < 10; x++) {
+            const rv = cache.lookup(cacheKey, modifiedFetchFn); // Not awaiting on purpose, to make the calls after the first call go to hold
+                rv.catch((ex) => {
+                    errors++;
+                }); // just ignore for now - we'll tackle it on the next test
+        }
+
+        try {
+            await cache.lookup(cacheKey, modifiedFetchFn);
+        }
+        catch(err) {
+            ex = err;
+            errors++;
+        }
+        expect(errors).toBe(11);
+    });
+
+});
