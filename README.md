@@ -11,9 +11,9 @@ An advanced in-memory cache module which allows you to keep hold of calls with t
 	  ttl: 120 // 2 minutes
 	});
 	
-	async function makeHTTPCall(url) { ... }
+	async function makeHTTPCall() { ... }
 	
-	const value = await cache.lookup('cache_key', () => makeHTTPCall('http://...'));
+	const value = await cache.lookup('cache_key', () => makeHTTPCall());
 
 ### With callbacks
 
@@ -22,9 +22,9 @@ An advanced in-memory cache module which allows you to keep hold of calls with t
 	  ttl: 120 // 2 minutes
 	});
 	
-	function makeHTTPCall(url) { ... }
+	function makeHTTPCall(callback) { ... }
 
-	cache.lookup('cache_key', (callback) => makeHTTPCall('http://...', callback), (err, res) => {
+	cache.lookup('cache_key', (callback) => makeHTTPCall(callback), (err, res) => {
 	  if (err)
 	    throw new Error('Failed to make HTTP call');
 	  console.log('HTTP call results: ', res);
