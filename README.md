@@ -6,7 +6,7 @@ An advanced in-memory cache module which allows you to keep hold of calls with t
 
 ### With Promises/Async-Await
 
-	const CacheHold = require('../cache-hold');
+	const CacheHold = require('cache-hold');
 	const cache = new CacheHold({
 	  ttl: 120 // 2 minutes
 	});
@@ -17,7 +17,7 @@ An advanced in-memory cache module which allows you to keep hold of calls with t
 
 ### With callbacks
 
-	const CacheHold = require('../cache-hold');
+	const CacheHold = require('cache-hold');
 	const cache = new CacheHold({
 	  ttl: 120 // 2 minutes
 	});
