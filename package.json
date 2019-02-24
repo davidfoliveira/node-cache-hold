@@ -1,6 +1,6 @@
 {
   "name": "cache-hold",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "An in-memory caching module which holds similar calls and fulfils all with the same result. Supports Promises and periodical cache updates.",
   "main": "cache-hold.js",
   "devDependencies": {
