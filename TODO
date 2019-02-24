@@ -1,0 +1,9 @@
+* Try to find a solution for queued calls being answered before calls issued before them
+    - Call one fetches
+    - Call two fetches
+    - Call three is queued
+    - Call one gets answer and fulfills one and three
+    - Call two gets answer and fulfulls itself only
+
+* Background update
+* Check whether it's possible to return always the same Promise instead of a new one?
