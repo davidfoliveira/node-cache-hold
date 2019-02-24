@@ -31,7 +31,9 @@ CacheHold.prototype._applyDefaultOpts = function() {
         opts.gracePeriod = 0;
     if (typeof(opts.firstFetchServesAll) !== 'boolean')
         opts.firstFetchServesAll = true;
-    if (!opts.cleanupInterval || (opts.cleanupInterval !== Infinity && !_isInt(opts.cleanupInterval)))
+    if (typeof(opts.errorFailsAll) !== 'boolean')
+        opts.errorFailsAll = false;
+    if (opts.cleanupInterval == null || (opts.cleanupInterval !== Infinity && !_isInt(opts.cleanupInterval)))
         opts.cleanupInterval = 10000;
     if (!opts.updateInterval || !_isInt(opts.updateInterval))
         opts.updateInterval = Infinity;
@@ -49,8 +51,9 @@ CacheHold.prototype.lookup = function(key, fetchFn, callback) {
     var
         self = this,
         now = (new Date()).getTime(),
-        rv = false,
-        fetchPromCallback = {
+        call = null,
+        rv = null,
+        fetchPromCall = {
             callback: null
         };
 
@@ -75,30 +78,31 @@ CacheHold.prototype.lookup = function(key, fetchFn, callback) {
         }
     }
 
+    // Create a call object which will be used until it's fulfilled
+    call = new Call(fetchFn, callback);
+
     // If one fetch serves all, let's queue them all and the first finishing
     // fetch will answer all queued
     if (self.opts.firstFetchServesAll) {
         // (3) Queue the return
-        rv = self._queueCall(key, callback);
+        rv = self._queueCall(key, call).promise;
         // (8) Are we still allowed to make fetches? Nope? Just return (Promise or false)
         if (self._fetching(key) >= self.opts.concurrentFetches)
-            return rv;
+            return rv || false;
     }
     // Otherwise, make a Promise or callback to answer this individual fetch
     else {
-        fetchPromCallback = self._makeFetchCallback(callback);
-        rv = fetchPromCallback.promise;
+        rv = fetchPromCall.promise;
         // (8) Are we above the limit of concurrent fetches? So we'll have to queue calls, sorry
-        if (self._fetching(key) >= self.opts.concurrentFetches) {
-            // (3) Queue the return
-            return self._queueCall(key, callback);
-        }
+        if (self._fetching(key) >= self.opts.concurrentFetches)
+            // (3) Queue the call
+            return self._queueCall(key, fetchPromCall).promise || false;
     }
 
     // (4) Call fetcher
-    self._callFetcher(key, fetchFn, fetchPromCallback.callback);
+    self._callFetcher(key, call);
 
-    return rv;
+    return rv || true;
 };
 
 CacheHold.prototype._ensureBackgroundFetch = function(key, fetchFn) {
@@ -115,31 +119,51 @@ CacheHold.prototype._fetching = function(key) {
     return _tableValue(this._currentFetches, key);
 };
 
-CacheHold.prototype._queueCall = function(key, callback) {
+CacheHold.prototype._queueCall = function(key, call) {
     var
         self = this,
         curOnHold = self.callHold[key] ? self.callHold[key].length : 0;
 
     // (7) Can we really queue this call?
     if (curOnHold >= self.opts.holdMax) {
-        var error = new Error("Both maximums for concurrent fetches and hold items were reached");
-        if (!callback && global['Promise'])
-            return new Promise(function (resolve, reject) { reject(error) });
-        return callback(error);
+        call.return(new Error("Both maximums for concurrent fetches and hold items were reached"));
+        return call;
     }
 
-    // We need to call the fetch function. Put this callback(or Promise)
-    // on hold to be called later
-    if (!callback && global['Promise']) {
-        return new Promise(function (resolve, reject) {
-            _addToQueue(self.callHold, key, function(err, res) {
-                err ? reject(err) : resolve(res)
-            });
-        });
+    // Just queue it
+    call.queued = true;
+    _addToQueue(self.callHold, key, call);
+    return call;
+};
+
+// TODO: This is not O(1)
+CacheHold.prototype._dequeueCall = function(key, call) {
+    var
+        foundAt = null;
+
+    // This should never happen but well....
+    if (!this.callHold[key]) {
+        console.log("node-cache-hold: CALL HOLD LIST IS EMTPY FOR "+key);
+        return;
     }
 
-    _addToQueue(self.callHold, key, callback);
-    return true;
+    for (var x = 0; x < this.callHold[key].length; x++) {
+        if (this.callHold[key][x] == call) {
+            foundAt = x;
+            break;
+        }
+    }
+
+    // This should never happen as well
+    if (foundAt === null) {
+        console.log("node-cache-hold: CALL NOT FOUND FOR "+key);
+        return;
+    }
+
+    // Just remove it
+    this.callHold[key].splice(foundAt, 1);
+
+    return call;
 };
 
 CacheHold.prototype._makeFetchCallback = function(callback) {
@@ -160,7 +184,7 @@ CacheHold.prototype._makeFetchCallback = function(callback) {
     };
 };
 
-CacheHold.prototype._callFetcher = function(key, fetchFn, callback) {
+CacheHold.prototype._callFetcher = function(key, call) {
     var
         self = this,
         fetchRetsPromise = false;
@@ -169,7 +193,7 @@ CacheHold.prototype._callFetcher = function(key, fetchFn, callback) {
     _tableInc(self._currentFetches, key);
 
     // Call the fetcher function
-    _callFetchFunc(fetchFn, function(err, res) {
+    call.fetch(function(err, res) {
         // (8.2) Mark we finished fetching
         _tableDec(self._currentFetches, key);
 
@@ -178,7 +202,7 @@ CacheHold.prototype._callFetcher = function(key, fetchFn, callback) {
             self._set(key, res);
 
         // (6, 5) Answer all calls
-        self._answer(key, callback, err, res);
+        self._answer(key, call, err, res);
     });
 };
 
@@ -199,14 +223,132 @@ CacheHold.prototype._set = function(key, value, now) {
     return self.cache[key];
 };
 
-function _callFetchFunc(fetchFn, callback) {
+CacheHold.prototype._fetchNext = function(key) {
     var
-        fetchRetsPromise = false;
+        unfetchedCall;
 
-    var fetchRV = fetchFn(function(err, res) {
+    // Are there calls on hold? No! Forget it!
+    if (!this.callHold[key])
+        return;
+
+    // Find a call on hold that hasn't fetched yet
+    for (var x = 0; x < this.callHold[key].length; x++) {
+        if (!this.callHold[key][x].fetched) {
+            unfetchedCall = this.callHold[key][x];
+            break;
+        }
+    }
+
+    // Found nothing! Forget it!
+    if (!unfetchedCall)
+        return;
+
+    // Call it's fetcher
+    return this._callFetcher(key, unfetchedCall);
+};
+
+CacheHold.prototype._answer = function(key, call, err, res) {
+    // If there's a callback, call it, otherwise fulfill the queued ones
+    if (!call.queued)
+        // (6) Call the one callback of the originating call
+        call.return(err, res);
+
+    // If there's an error, don't answer queued calls, unless `errorFailsAll: true`
+    if (err && !this.opts.errorFailsAll) {
+        // Actually, if the call triggering the fetch was queued, answer it!
+        if (call.queued)
+            call.return(err, res);
+
+        // Remove this call from the queue
+        this._dequeueCall(key, call);
+
+        // If there's no on-going fetch, pull another task from the queue that
+        // hasn't fetched and call it's fetcher.
+        if (!this._fetching(key))
+            this._fetchNext(key);
+        return;
+    }
+
+    // (5) Answer queued calls
+    this._answerQueued(key, err, res);
+};
+
+CacheHold.prototype._answerQueued = function(key, err, res) {
+    var
+        queue = this.callHold[key];
+
+    // It might be possible that this call has already been fulfilled
+    if (!queue)
+        return;
+    while (queue.length > 0) {
+        queue.shift().return(err, res);
+    }
+};
+
+CacheHold.prototype._startCleanup = function() {
+    var
+        self = this;
+
+    if (self.opts.cleanupInterval === Infinity || !self.opts.cleanupInterval) {
+        self._cleanupInt = undefined;
+        return;
+    }
+    self._cleanupInt = setInterval(self._cleanup, self.opts.cleanupInterval*1000);
+};
+
+CacheHold.prototype._stopCleanup = function() {
+    if (self._cleanupInt !== undefined)
+        clearInterval(self._cleanupInt);
+};
+
+CacheHold.prototype._cleanup = function() {
+    var
+        self = this,
+        now = (new Date()).getTime();
+
+    for (var key in self.cache) {
+        if (self.cache[key].dies < now)
+            delete self.cache[key];
+    }
+};
+
+
+// The cache "request" object
+function Call(fetcher, callback) {
+    var fns = {};
+    this.id = Math.random();
+    this.fetcher = fetcher;
+    this.callback = callback;
+    this.queued = false;
+    this.fetched = false;
+    this.returned = false;
+
+    // If a callback wasn't supplied, the user might be expecting a promise
+    if (!callback && global['Promise']) {
+        this.promise = new Promise(function (resolve, reject) {
+            fns.resolve = resolve;
+            fns.reject = reject;
+        });
+        this.callback = function(err, res) { err ? fns.reject(err) : fns.resolve(res) };
+    }
+
+    return this;
+}
+
+Call.prototype.fetch = function(callback) {
+    // console.log("Fetching "+this.id);
+    var
+        fetchRetsPromise = false,
+        fetchRV;
+
+    // Mark the call as fetched
+    this.fetched = true;
+
+    // Call the fetcher function
+    fetchRV = this.fetcher(function(err, res) {
         // Ensure the callback never runs before the fetchFn() finishes
         // as we need to know if it returns a Promise.
-        setImmediate(function(){
+        _setImmediate(function(){
             if (fetchRetsPromise)
                 return;
             callback(err, res);
@@ -225,67 +367,27 @@ function _callFetchFunc(fetchFn, callback) {
     }
 };
 
-CacheHold.prototype._answer = function(key, callback, err, res) {
-    // If there's a callback, call it, otherwise fulfill the queued ones
-    if (callback)
-        // (6) Call the one callback of the originating call
-        _protectedCall(callback, err, res);
-
-    // (5) Answer queued calls
-    this._answerQueued(key, err, res);
-};
-
-CacheHold.prototype._answerQueued = function(key, err, res) {
-    var
-        queue = this.callHold[key];
-
-    // It might be possible that this call has already been fulfilled
-    if (!queue)
-        return;
-    while (queue.length > 0) {
-        _protectedCall(queue.shift(), err, res);
-    }
-};
-
-CacheHold.prototype._startCleanup = function() {
-    var
-        self = this;
-
-    if (self.opts.cleanupInterval === Infinity) {
-        self._cleanupInt = undefined;
+Call.prototype.return = function(err, res) {
+    if (this.returned) {
+        console.log("node-cache-hold: Trying to return to a call which already had its answer returned. Stopping it.");
         return;
     }
-    self._cleanupInt = setInterval(self._cleanup, self.opts.cleanupInterval);
-};
+//    console.log("Returning "+this.id);
 
-CacheHold.prototype._stopCleanup = function() {
-    if (self._cleanupInt !== undefined)
-        clearInterval(self._cleanupInt);
-};
-
-CacheHold.prototype._cleanup = function() {
-    var
-        now = (new Date()).getTime();
-
-    for (var key in self.cache) {
-        if (self.cache[key].dies < now)
-            delete self.cache[key];
-    }
-};
-
-// Utils
-function _isInt(value) {
-    return (typeof(value) === 'number' && value.toString().match(/^\d+$/));
-}
-
-function _protectedCall(callback, err, res) {
+    this.returned = true;
     try {
-        return callback(err, res);
+        return this.callback(err, res);
     }
     catch(ex) {
         return ex;
     }
 };
+
+
+// Utils
+function _isInt(value) {
+    return (typeof(value) === 'number' && value.toString().match(/^\d+$/));
+}
 
 function _setImmediate(callback) {
     if (global['setImmediate'])

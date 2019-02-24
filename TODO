@@ -1,9 +1,14 @@
-* Try to find a solution for queued calls being answered before calls issued before them
+* Background update
+* More tests
+    - Expire and grace
+    - Background update call during grace
+    - Background update call ongoing and queuing calls
+    - Time test (load)
+
+* Try to find a solution for queued calls being answered before calls issued before them (this is not necessarily a bad thing but maybe should be an option)
     - Call one fetches
     - Call two fetches
     - Call three is queued
     - Call one gets answer and fulfills one and three
     - Call two gets answer and fulfulls itself only
-
-* Background update
 * Check whether it's possible to return always the same Promise instead of a new one?

@@ -163,6 +163,36 @@ describe('Basic lookup with defaults', () => {
         });
     });
 
+    describe('Option errorFailsAll: true', () => {
+
+        test.each([['fast', fetchError], ['slow', fetchSlowError]])
+        ('raises in all calls after one fetch error (with %s fetcher)', async (fetchName, fetchFn) => {
+            // Create a new fetcher which adds a call number to the fetch function return value
+            const cacheKey = `cache_key_test_e3 ${fetchName}`;
+            const callCount = {};
+            let errors = 0;
+
+            callCount[fetchName] = 0;
+            const modifiedFetchFn = (cb) => fetchFn((err) => cb(new Error(`${err.message} ${callCount[fetchName]++}`)));
+            for (let x = 0; x < 10; x++) {
+                const rv = cache.lookup(cacheKey, modifiedFetchFn); // Not awaiting on purpose, to make the calls after the first call go to hold
+                    rv.catch((ex) => {
+                        errors++;
+                    }); // just ignore for now - we'll tackle it on the next test
+            }
+
+            try {
+                await cache.lookup(`cache_key_test_e3 ${fetchName}`, modifiedFetchFn);
+            }
+            catch(err) {
+                ex = err;
+                errors++;
+            }
+            expect(errors).toBe(11);
+        });
+
+    });
+
 });
 
 
