@@ -1,6 +1,6 @@
 {
   "name": "cache-hold",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "An in-memory caching module which holds similar calls and fulfils all with the same result. Supports Promises and periodical cache updates.",
   "main": "cache-hold.js",
   "devDependencies": {
@@ -10,5 +10,14 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "David Oliveira",
-  "license": "ISC"
+  "license": "ISC",
+  "engines": {
+    "node": ">=0.10.5"
+  },
+  "keywords": [
+    "cache",
+    "hold",
+    "grace",
+    "queue"
+  ]
 }
