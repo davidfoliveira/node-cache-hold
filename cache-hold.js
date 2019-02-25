@@ -69,10 +69,11 @@ CacheHold.prototype.lookup = function(key, fetchFn, callback) {
         // Cache still valid
         if (self.cache[key].expires >= now)
             return _lookupReturn(self.cache[key].value, callback);
+
         // Cache not valid but within the grace period
         if (self.cache[key].dies > now) {
             // Ensures there's ONE background fetch task
-            self._ensureBackgroundFetch(key, fetchFn);
+            self._ensureBackgroundFetch(key, new Call(fetchFn, function(){}));
             // Return what's still in cache
             return _lookupReturn(self.cache[key].value, callback);
         }
@@ -105,14 +106,14 @@ CacheHold.prototype.lookup = function(key, fetchFn, callback) {
     return rv || true;
 };
 
-CacheHold.prototype._ensureBackgroundFetch = function(key, fetchFn) {
+CacheHold.prototype._ensureBackgroundFetch = function(key, call) {
     // Is it already fetching? Just wait for it to complete
     if (this._fetching(key))
         return;
 
     // Not fetching? Trigger a fetch.
     // (4) Call fetcher
-    this._callFetcher(key, fetchFn);
+    this._callFetcher(key, call);
 };
 
 CacheHold.prototype._fetching = function(key) {
@@ -372,7 +373,7 @@ Call.prototype.return = function(err, res) {
         console.log("node-cache-hold: Trying to return to a call which already had its answer returned. Stopping it.");
         return;
     }
-//    console.log("Returning "+this.id);
+    // console.log("Returning "+this.id);
 
     this.returned = true;
     try {

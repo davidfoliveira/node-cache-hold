@@ -217,3 +217,113 @@ describe('Option errorFailsAll: true', () => {
 
 });
 
+describe('Time tests', () => {
+
+    const
+        slowFetch = (time) => {
+            return new Promise((res, rej) => setTimeout(() => res("NOT FROM CACHE"), time));
+        },
+        sleep = (time) => {
+            return new Promise((res, rej) => setTimeout(res, time));
+        };
+
+    it('is blazing fast with everything on cache', async () => {
+        const
+            cacheKey = `cache_key_test_t1`,
+            start = new Date().getTime(),
+            cache = new CacheHold({
+                ttl: 120
+            });
+
+        cache._set(cacheKey, "I CAME FROM CACHE");
+
+        // Do 100 lookups in series
+        for (let x = 0; x < 100; x++) {
+            await cache.lookup(cacheKey, () => slowFetch(1000));
+        }
+
+        expect(new Date().getTime() - start).toBeLessThan(50);
+    });
+
+    it('takes a bit more than 1 fetch time for 100 calls with nothing in cache', async () => {
+        const
+            cacheKey = `cache_key_test_t2`,
+            start = new Date().getTime(),
+            cache = new CacheHold({
+                ttl: 120
+            });
+
+        // Do 100 lookups in series
+        for (let x = 0; x < 100; x++) {
+            await cache.lookup(cacheKey, () => slowFetch(1000));
+        }
+
+        expect(new Date().getTime() - start).toBeLessThan(1500);
+    });
+
+    it('takes a bit more than 1 fetch time for 100 calls with expired item', async () => {
+        const
+            cacheKey = `cache_key_test_t2`,
+            start = new Date().getTime(),
+            cache = new CacheHold({
+                ttl: 120
+            });
+
+        cache._set(cacheKey, "I CAME FROM CACHE", start - 130000);
+
+        // Do 100 lookups in series
+        for (let x = 0; x < 100; x++) {
+            await cache.lookup(cacheKey, () => slowFetch(1000));
+        }
+
+        expect(new Date().getTime() - start).toBeLessThan(1500);
+    });
+
+    it('is blazing fast answering to 100 calls for expired item served from cache w/in grace period', async () => {
+        const
+            cacheKey = `cache_key_test_t2`,
+            start = new Date().getTime(),
+            cache = new CacheHold({
+                ttl: 120,
+                gracePeriod: 30
+            });
+
+        cache._set(cacheKey, "I CAME FROM CACHE", start - 130000);
+
+        // Do 100 lookups in series
+        for (let x = 0; x < 100; x++) {
+            rv = await cache.lookup(cacheKey, () => slowFetch(100));
+        }
+
+        expect(new Date().getTime() - start).toBeLessThan(50);
+    });
+
+    it('when doing background fetch, the last return value comes from the fetch function and is diff from the first', async () => {
+        const
+            cacheKey = `cache_key_test_t2`,
+            start = new Date().getTime(),
+            cache = new CacheHold({
+                ttl: 120,
+                gracePeriod: 30
+            }),
+            fakeSlowFetch = jest.fn().mockImplementation(slowFetch);
+        let
+            firstRV,
+            lastRV;
+
+        cache._set(cacheKey, "I CAME FROM CACHE", start - 130000);
+
+        // Do 100 lookups in series
+        firstRV = await cache.lookup(cacheKey, () => fakeSlowFetch(1000));
+        for (let x = 0; x < 10; x++) {
+            await sleep(150);
+            lastRV = await cache.lookup(cacheKey, () => fakeSlowFetch(1000));
+        }
+
+        expect(firstRV).toBe("I CAME FROM CACHE");
+        expect(lastRV).toBe("NOT FROM CACHE");
+        expect(fakeSlowFetch).toHaveBeenCalledTimes(1);
+        expect(new Date().getTime() - start).toBeLessThan(2000);
+    });
+
+});
